@@ -131,12 +131,46 @@ def send(subject: str, body: str) -> None:
     print(f"Sent to {to}.")
 
 
+FALLBACK_BODY = """Shiva Bowl waiver check - {today:%a %d %b %Y}
+{rule}
+
+The Yahoo Fantasy API is still refusing this app, so I could not pull the
+roster and free-agent lists automatically.
+
+  Reason: {reason}
+
+This is almost certainly the access gate Yahoo put on the Fantasy API in
+July 2026, not a fault in this setup. The application for access was
+submitted on 30 Sep 2026 and is still pending review.
+
+WAIVERS STILL PROCESS TOMORROW (WEDNESDAY), so don't skip the week:
+
+  - Ask Claude for a waiver review - it can read the league through the
+    browser, which still works, and submit claims for you.
+  - Or do it by hand: https://football.fantasysports.yahoo.com/f1/891227/6
+
+Standing reminders:
+  - Check your roster for anyone on bye next week.
+  - Kicker and defence are the cheapest weekly upgrades.
+"""
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="print instead of emailing")
     args = ap.parse_args()
 
-    subject, body = build_report()
+    # Degrade gracefully: a silent failure on a Tuesday night is worse than a
+    # plain email saying "do this by hand". Never let the weekly nudge vanish.
+    try:
+        subject, body = build_report()
+    except Exception as exc:  # noqa: BLE001
+        reason = f"{type(exc).__name__}: {exc}"
+        if len(reason) > 300:
+            reason = reason[:300] + "..."
+        subject = f"Shiva Bowl waivers - MANUAL review needed ({date.today():%d %b})"
+        body = FALLBACK_BODY.format(today=date.today(), rule="=" * 52, reason=reason)
+
     if args.dry_run:
         print(subject)
         print()
