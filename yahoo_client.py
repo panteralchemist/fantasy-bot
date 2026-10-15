@@ -20,9 +20,24 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 import requests
-from dotenv import load_dotenv, set_key
 
 ENV_PATH = Path(__file__).with_name(".env")
+
+try:
+    from dotenv import load_dotenv, set_key
+except ImportError:
+    # Home Assistant's container has requests but not python-dotenv; a plain
+    # KEY=value reader is all the headless report needs.
+    set_key = None
+
+    def load_dotenv(path: Path) -> None:
+        if not Path(path).exists():
+            return
+        for line in Path(path).read_text().splitlines():
+            key, sep, value = line.partition("=")
+            if sep and not key.lstrip().startswith("#"):
+                os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
 load_dotenv(ENV_PATH)
 
 AUTH_URL = "https://api.login.yahoo.com/oauth2/request_auth"
@@ -31,6 +46,9 @@ API_BASE = "https://fantasysports.yahooapis.com/fantasy/v2"
 
 # Every element in a Yahoo fantasy response carries this namespace.
 NS = {"y": "http://fantasysports.yahooapis.com/fantasy/v2/base.rng"}
+
+# Injury designations Yahoo lets into an IR slot. Doubtful ("D") is NOT one.
+IR_STATUSES = {"O", "IR", "IR-R", "PUP-R", "PUP-P", "NFI-R", "NFI-A", "SUSP"}
 
 
 def _require(name: str) -> str:
@@ -166,16 +184,21 @@ class Yahoo:
         return [_player(p) for p in root.iterfind(".//y:player", NS)]
 
     def free_agents(self, position: str | None = None, count: int = 25) -> list[dict]:
+        # percent_owned is a sub-resource; without it the value is simply absent.
         path = f"league/{self.league_key()}/players;status=A;sort=AR;count={count}"
         if position:
             path += f";position={position}"
-        root = self.get(path)
+        root = self.get(path + "/percent_owned")
         return [_player(p) for p in root.iterfind(".//y:player", NS)]
 
-    def ir_eligible(self, count: int = 25) -> list[dict]:
-        path = f"league/{self.league_key()}/players;status=IR;sort=AR;count={count}"
-        root = self.get(path)
-        return [_player(p) for p in root.iterfind(".//y:player", NS)]
+    def ir_eligible(self, count: int = 50) -> list[dict]:
+        # The API's status filter only takes A/FA/W/T/K - "IR" is a 400. So pull
+        # the top available players and keep the ones with an IR-able designation.
+        return [p for p in self.free_agents(count=count) if p["status"] in IR_STATUSES]
+
+    def current_week(self) -> int:
+        root = self.get(f"league/{self.league_key()}")
+        return int(_text(root, ".//y:current_week") or 1)
 
     def standings(self) -> list[dict]:
         root = self.get(f"league/{self.league_key()}/standings")

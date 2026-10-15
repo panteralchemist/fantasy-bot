@@ -17,11 +17,7 @@ from datetime import date
 from email.message import EmailMessage
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-from yahoo_client import Yahoo
-
-load_dotenv(Path(__file__).with_name(".env"))
+from yahoo_client import Yahoo  # also loads .env
 
 
 def build_report() -> tuple[str, str]:
@@ -29,7 +25,7 @@ def build_report() -> tuple[str, str]:
 
     roster = y.roster()
     standings = y.standings()
-    me = next((t for t in standings if t.get("faab")), None)
+    week = y.current_week()
 
     # Bye-week concentration is the structural trap on this roster - five
     # Eagles plus Monangai all sat out Week 10 as drafted.
@@ -42,6 +38,7 @@ def build_report() -> tuple[str, str]:
         key=lambda kv: -len(kv[1]),
     )
 
+    on_bye = [p for p in roster if p["bye"] == str(week)]
     injured = [p for p in roster if p["status"]]
     fa_rb = y.free_agents("RB", 10)
     fa_wr = y.free_agents("WR", 10)
@@ -51,9 +48,15 @@ def build_report() -> tuple[str, str]:
     lines: list[str] = []
     add = lines.append
 
-    add(f"Shiva Bowl waiver check - {date.today():%a %d %b %Y}")
+    add(f"Shiva Bowl waiver check - Week {week} - {date.today():%a %d %b %Y}")
     add("=" * 52)
     add("")
+
+    if on_bye:
+        add(f"ON BYE IN WEEK {week} - NEED COVER")
+        for p in on_bye:
+            add(f"  {p['name']} ({p['position']}, {p['team']})")
+        add("")
 
     add("STANDINGS")
     for t in standings:
@@ -134,14 +137,13 @@ def send(subject: str, body: str) -> None:
 FALLBACK_BODY = """Shiva Bowl waiver check - {today:%a %d %b %Y}
 {rule}
 
-The Yahoo Fantasy API is still refusing this app, so I could not pull the
-roster and free-agent lists automatically.
+The automatic report failed, so I could not pull the roster and
+free-agent lists from the Yahoo Fantasy API.
 
   Reason: {reason}
 
-This is almost certainly the access gate Yahoo put on the Fantasy API in
-July 2026, not a fault in this setup. The application for access was
-submitted on 30 Sep 2026 and is still pending review.
+A 401/403 usually means the refresh token or app access lapsed; a 400
+means a query this script sends is no longer accepted.
 
 WAIVERS STILL PROCESS TOMORROW (WEDNESDAY), so don't skip the week:
 
